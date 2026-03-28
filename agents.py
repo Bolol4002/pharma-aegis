@@ -76,8 +76,8 @@ def data_analyzer(reading: SensorReading) -> AnalysisResult:
         vibration_status = "high"
         vibration_score = 2
 
-    # Fire sensor is binary; any non-zero value is treated as detected.
-    fire_status = "detected" if int(reading.fire) != 0 else "safe"
+    # Fire sensor default idle state is 1 (safe). A value of 0 indicates fire detected.
+    fire_status = "detected" if int(reading.fire) == 0 else "safe"
     fire_score = 6 if fire_status == "detected" else 0
 
     return AnalysisResult(
@@ -214,7 +214,7 @@ def run_analysis_pipeline():
         temperature=float(sensor_data.get("temperature", 20)),
         humidity=float(sensor_data.get("humidity", 50)),
         vibration=float(sensor_data.get("vibration", 1.0)),
-        fire=int(sensor_data.get("fire", 0))
+        fire=int(sensor_data.get("fire", 1))
     )
     
     # Run analysis

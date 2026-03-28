@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 PORT = 'COM5'
 BAUD = 115200
-DEMO_MODE = True  # Set to True to use fake data for testing
+DEMO_MODE = False  # Use real serial sensor data by default
 
 ser = None
 latest_data = {"status": "Waiting for connection...", "timestamp": "N/A"}
@@ -33,7 +33,7 @@ def run_agent_pipeline(sensor_payload):
         temperature=float(sensor_payload.get("temperature", 20.0)),
         humidity=float(sensor_payload.get("humidity", 50.0)),
         vibration=float(sensor_payload.get("vibration", 1.0)),
-        fire=int(sensor_payload.get("fire", 0)),
+        fire=int(sensor_payload.get("fire", 1)),
     )
 
     analysis = data_analyzer(reading)
@@ -86,6 +86,26 @@ def find_com_ports():
         ports = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
     
     return ports if ports else ["COM1", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9"]
+
+
+def find_preferred_port():
+    """Prefer the actual USB serial device when available."""
+    try:
+        from serial.tools import list_ports
+        detected = list(list_ports.comports())
+        if not detected:
+            return None
+
+        # Prefer common USB bridge identifiers used by ESP boards.
+        preferred_keywords = ("CH910", "CH340", "CP210", "USB", "UART", "Silicon Labs")
+        for p in detected:
+            desc = (p.description or "").upper()
+            if any(keyword.upper() in desc for keyword in preferred_keywords):
+                return p.device
+
+        return detected[0].device
+    except Exception:
+        return None
 
 # 🌐 HTML Dashboard
 DASHBOARD_HTML = """
@@ -397,7 +417,7 @@ def read_sensor():
                 temp = round(22 + random.uniform(-2, 2), 2)
                 humid = round(55 + random.uniform(-10, 10), 2)
                 vib = round(random.uniform(0.5, 2.5), 3)
-                fire = 0
+                fire = 1
                 
                 latest_data = {
                     "temperature": temp,
@@ -418,30 +438,42 @@ def read_sensor():
             time.sleep(1)
         return
     
+    preferred_port = find_preferred_port()
     available_ports = find_com_ports()
+    if preferred_port and preferred_port in available_ports:
+        available_ports.remove(preferred_port)
+        available_ports.insert(0, preferred_port)
+    elif preferred_port and preferred_port not in available_ports:
+        available_ports.insert(0, preferred_port)
+
     print(f"Available COM ports: {available_ports}")
     
     # Try each port until one works
     for attempt_port in available_ports:
         try:
+            PORT = attempt_port
             print(f"🔍 Attempting to connect to {attempt_port}...")
             ser = serial.Serial(attempt_port, BAUD, timeout=1)
-            PORT = attempt_port
             print(f"✅ Serial connected on {PORT}")
             connection_status = f"✅ Connected on {PORT}"
 
             time.sleep(5)  # 🔥 wait for ESP reset
             print("⏳ Waiting for ESP READY signal...")
 
-            # 🔥 wait until ESP says READY (with timeout)
+            # Wait until ESP says READY or starts sending JSON.
             start = time.time()
+            ready_seen = False
             while time.time() - start < 10:
                 if ser.in_waiting > 0:
                     line = ser.readline().decode('utf-8', errors='ignore').strip()
                     print("INIT:", line)
                     if "READY" in line or line.startswith("{"):
                         print("✅ ESP Active")
+                        ready_seen = True
                         break
+
+            if not ready_seen:
+                print("⚠️ READY signal not seen in 10s, continuing to read stream...")
 
             # Now read sensor data in a loop
             while True:
