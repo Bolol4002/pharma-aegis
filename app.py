@@ -5,6 +5,8 @@ import time
 from threading import Thread, Lock
 import platform
 import random
+from agents import data_analyzer, risk_evaluator, decision_agent
+from models import SensorReading
 
 app = Flask(__name__)
 
@@ -14,6 +16,11 @@ DEMO_MODE = True  # Set to True to use fake data for testing
 
 ser = None
 latest_data = {"status": "Waiting for connection...", "timestamp": "N/A"}
+latest_analysis = {
+    "analysis": {"temperature": "normal", "humidity": "normal", "vibration": "normal", "fire": "safe", "anomaly_score": 0},
+    "risk": {"level": "LOW", "reason": "Initializing..."},
+    "decision": {"action": "MONITOR", "requires_human": False}
+}
 data_lock = Lock()
 connection_status = "⏳ Initializing..."
 demo_enabled = DEMO_MODE
@@ -52,204 +59,208 @@ DASHBOARD_HTML = """
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             padding: 20px;
         }
         .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
             background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
-            max-width: 800px;
-            width: 100%;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            text-align: center;
         }
         h1 {
-            text-align: center;
             color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
-        }
-        .status {
-            text-align: center;
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 30px;
-            padding: 10px;
-            border-radius: 5px;
-        }
-        .status.connected { 
-            color: #fff; 
-            background: #4CAF50;
-        }
-        .status.disconnected { 
-            color: #fff; 
-            background: #f44336;
-        }
-        .metrics {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .metric {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 25px;
-            border-radius: 12px;
-            text-align: center;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-            transition: transform 0.3s ease;
-        }
-        .metric:hover { transform: translateY(-5px); }
-        .metric-label {
-            font-size: 11px;
-            opacity: 0.9;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            word-break: break-word;
-        }
-        .metric-value {
             font-size: 32px;
-            font-weight: bold;
-            font-family: 'Courier New', monospace;
-            word-break: break-word;
-        }
-        .timestamp {
-            text-align: center;
-            color: #999;
-            font-size: 12px;
-            margin-top: 20px;
-            font-family: monospace;
-        }
-        .controls {
-            text-align: center;
-            margin-top: 20px;
-        }
-        button {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.3s;
-            margin: 5px;
-        }
-        button:hover { background: #764ba2; }
-        .info-box {
-            background: #e3f2fd;
-            color: #1565c0;
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
-            border-left: 4px solid #1565c0;
-        }
-        .debug-info {
-            background: #f5f5f5;
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 300px;
-            overflow-y: auto;
-            border-left: 4px solid #667eea;
-        }
-        input[type="text"] {
-            padding: 8px 12px;
-            border: 2px solid #667eea;
-            border-radius: 5px;
-            font-size: 14px;
-            width: 100px;
+            margin-bottom: 10px;
         }
         .demo-badge {
             display: inline-block;
             background: #ff9800;
             color: white;
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-size: 10px;
-            margin-left: 10px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
             font-weight: bold;
+            margin-left: 10px;
         }
+        .status-bar {
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            color: #667eea;
+            font-size: 16px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .sensor-reading {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .sensor-reading:last-child { border-bottom: none; }
+        .sensor-name {
+            color: #666;
+            font-weight: 500;
+        }
+        .sensor-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            font-family: 'Courier New', monospace;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-optimal { background: #4CAF50; color: white; }
+        .status-warning { background: #ff9800; color: white; }
+        .status-danger { background: #f44336; color: white; }
+        .status-safe { background: #4CAF50; color: white; }
+        .status-detected { background: #f44336; color: white; }
+        .risk-card {
+            text-align: center;
+            padding: 30px;
+        }
+        .risk-level {
+            font-size: 48px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .risk-low { background: #c8e6c9; color: #2e7d32; }
+        .risk-medium { background: #ffe0b2; color: #e65100; }
+        .risk-high { background: #ffccbc; color: #d84315; }
+        .risk-critical { background: #ffcdd2; color: #b71c1c; animation: pulse 1s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+        .risk-reason {
+            color: #666;
+            font-size: 14px;
+            margin-top: 15px;
+            font-style: italic;
+        }
+        .decision-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 30px;
+        }
+        .decision-action {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+        }
+        .human-review {
+            background: rgba(255,255,255,0.2);
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 12px;
+        }
+        .full-width { grid-column: 1 / -1; }
+        .timestamp {
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        .grid-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
+        .mini-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .mini-card-label { font-size: 11px; opacity: 0.9; text-transform: uppercase; }
+        .mini-card-value { font-size: 24px; font-weight: bold; margin-top: 8px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🏥 Pharma Aegis <span id="demoBadge"></span></h1>
-        <div class="status disconnected" id="status">● Checking Connection...</div>
-        
-        <div class="metrics" id="metrics">
-            <div style="grid-column: 1 / -1; text-align: center; color: #999;">Waiting for sensor data...</div>
-        </div>
-        
-        <div class="info-box">
-            <strong>📡 Connection Troubleshooting:</strong>
-            <ul style="margin-top: 10px; margin-left: 20px;">
-                <li>Check if ESP32/device is plugged in</li>
-                <li>Verify the correct COM port is set (default: COM5)</li>
-                <li>Try a different USB cable or port</li>
-                <li>Make sure no other app is using the serial port</li>
-            </ul>
+        <div class="header">
+            <h1>🏥 Pharma Aegis <span id="demoBadge"></span></h1>
+            <div class="status-bar" id="status">● Initializing...</div>
         </div>
 
-        <div class="debug-info" id="debug">
-            <strong>Debug Info:</strong><br>
-            <div id="debugLog">Loading...</div>
+        <div class="grid">
+            <!-- Sensor Readings -->
+            <div class="card">
+                <h2>📊 Sensor Readings</h2>
+                <div id="sensorReadings">
+                    <div style="text-align: center; color: #999;">Waiting for data...</div>
+                </div>
+            </div>
+
+            <!-- Analysis Results -->
+            <div class="card">
+                <h2>🔍 Analysis Status</h2>
+                <div id="analysisResults">
+                    <div style="text-align: center; color: #999;">Analyzing...</div>
+                </div>
+            </div>
+
+            <!-- Risk Assessment -->
+            <div class="card risk-card">
+                <h2 style="text-align: left; margin-bottom: 20px;">⚠️  Risk Level</h2>
+                <div class="risk-level" id="riskLevel">--</div>
+                <div class="risk-reason" id="riskReason">--</div>
+            </div>
+
+            <!-- Decision/Action -->
+            <div class="card decision-card">
+                <h2 style="text-align: left; margin-bottom: 20px; color: white;">✅ Recommended Action</h2>
+                <div class="decision-action" id="decision">--</div>
+                <div class="human-review" id="humanReview">--</div>
+            </div>
         </div>
-        
-        <div class="timestamp">Last Updated: <span id="timestamp">--:--:--</span></div>
-        <div class="controls">
-            <button onclick="location.reload()">🔄 Refresh</button>
+
+        <div class="timestamp">
+            Last Updated: <span id="timestamp">--:--:--</span>
         </div>
     </div>
 
     <script>
-        function formatValue(value) {
-            if (typeof value === 'number') {
-                if (Number.isInteger(value)) return value.toString();
-                return value.toFixed(2);
-            }
-            return value;
+        function getRiskClass(level) {
+            if (level === 'LOW') return 'risk-low';
+            if (level === 'MEDIUM') return 'risk-medium';
+            if (level === 'HIGH') return 'risk-high';
+            if (level === 'CRITICAL') return 'risk-critical';
+            return 'risk-low';
         }
 
-        function renderMetrics(data) {
-            const metricsContainer = document.getElementById('metrics');
-            metricsContainer.innerHTML = '';
-            
-            let count = 0;
-            for (const [key, value] of Object.entries(data)) {
-                if (key === 'timestamp' || key === 'status') continue;
-                
-                const metric = document.createElement('div');
-                metric.className = 'metric';
-                
-                const label = key.replace(/_/g, ' ').toUpperCase();
-                metric.innerHTML = `
-                    <div class="metric-label">${label}</div>
-                    <div class="metric-value">${formatValue(value)}</div>
-                    <div class="metric-unit"></div>
-                `;
-                metricsContainer.appendChild(metric);
-                count++;
-            }
-            
-            if (count === 0) {
-                metricsContainer.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: #999;">No sensor data received yet...</div>';
-            }
-        }
-
-        function updateDebug(text) {
-            const debugLog = document.getElementById('debugLog');
-            const timestamp = new Date().toLocaleTimeString();
-            debugLog.innerHTML = `[${timestamp}] ${text}<br>` + debugLog.innerHTML;
-            if (debugLog.innerHTML.split('<br>').length > 10) {
-                debugLog.innerHTML = debugLog.innerHTML.split('<br>').slice(0, 10).join('<br>');
-            }
+        function getStatusClass(status) {
+            if (status.includes('optimal') || status.includes('normal') || status.includes('safe')) return 'status-optimal';
+            if (status.includes('warm') || status.includes('cool') || status.includes('elevated') || status.includes('humid') || status.includes('dry')) return 'status-warning';
+            if (status.includes('too_') || status.includes('high') || status.includes('detected')) return 'status-danger';
+            return 'status-optimal';
         }
 
         function updateData() {
@@ -258,45 +269,73 @@ DASHBOARD_HTML = """
             eventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('Received data:', data);
+                    console.log('Received:', data);
                     
-                    renderMetrics(data);
+                    // Update sensor readings
+                    const sensorHtml = Object.entries(data.sensor_data || {})
+                        .filter(([k]) => !['timestamp', 'fire'].includes(k))
+                        .map(([key, value]) => {
+                            const formatted = typeof value === 'number' ? value.toFixed(2) : value;
+                            const unit = key === 'temperature' ? '°C' : key === 'humidity' ? '%' : '';
+                            return `
+                                <div class="sensor-reading">
+                                    <span class="sensor-name">${key.replace(/_/g, ' ').toUpperCase()}</span>
+                                    <span class="sensor-value">${formatted}${unit}</span>
+                                </div>
+                            `;
+                        }).join('');
+                    document.getElementById('sensorReadings').innerHTML = sensorHtml || '<div style="color: #999;">No data</div>';
                     
-                    document.getElementById('timestamp').textContent = 
-                        new Date().toLocaleTimeString();
+                    // Update analysis results
+                    const analysis = data.analysis || {};
+                    const analysisHtml = Object.entries(analysis)
+                        .filter(([k]) => k !== 'anomaly_score')
+                        .map(([key, value]) => `
+                            <div class="sensor-reading">
+                                <span class="sensor-name">${key.replace(/_/g, ' ').toUpperCase()}</span>
+                                <span class="status-badge ${getStatusClass(value)}">${value}</span>
+                            </div>
+                        `).join('') + `
+                        <div class="sensor-reading">
+                            <span class="sensor-name">ANOMALY SCORE</span>
+                            <span class="sensor-value">${analysis.anomaly_score || 0}</span>
+                        </div>
+                    `;
+                    document.getElementById('analysisResults').innerHTML = analysisHtml || '<div style="color: #999;">Analyzing...</div>';
                     
-                    document.getElementById('status').textContent = '✅ Connected & Receiving Data';
-                    document.getElementById('status').className = 'status connected';
-                    updateDebug('✅ Data received successfully');
+                    // Update risk level
+                    const risk = data.risk || {};
+                    const riskClass = getRiskClass(risk.level);
+                    document.getElementById('riskLevel').className = `risk-level ${riskClass}`;
+                    document.getElementById('riskLevel').textContent = risk.level || '--';
+                    document.getElementById('riskReason').textContent = risk.reason || '--';
+                    
+                    // Update decision
+                    const decision = data.decision || {};
+                    document.getElementById('decision').textContent = decision.action || '--';
+                    document.getElementById('humanReview').textContent = decision.requires_human 
+                        ? '👤 Human Review Required' 
+                        : '✅ Autonomous Monitoring';
+                    
+                    // Update status
+                    document.getElementById('status').textContent = '✅ Connected & Analyzing';
+                    document.getElementById('timestamp').textContent = new Date().toLocaleTimeString();
+                    
+                    // Demo badge
+                    if (data.demo_mode) {
+                        document.getElementById('demoBadge').innerHTML = '<span class="demo-badge">🎮 DEMO MODE</span>';
+                    }
                 } catch(e) {
-                    console.error('Parse error:', e);
-                    updateDebug('❌ Parse error: ' + e.message);
+                    console.error('Error:', e);
                 }
             };
             
             eventSource.onerror = function() {
                 document.getElementById('status').textContent = '⏳ Reconnecting...';
-                document.getElementById('status').className = 'status';
-                updateDebug('⏳ Connection lost, attempting to reconnect...');
             };
         }
         
-        updateDebug('🔍 Initializing connection...');
-        setTimeout(updateData, 1000);
-        
-        // Fetch debug info
-        fetch('/debug').then(r => r.json()).then(data => {
-            updateDebug('Available Ports: ' + data.available_ports.join(', '));
-            updateDebug('Current Port: ' + data.current_port);
-            updateDebug('Status: ' + data.connection_status);
-            
-            if (data.demo_mode) {
-                document.getElementById('demoBadge').innerHTML = '<span class="demo-badge">🎮 DEMO MODE</span>';
-                document.getElementById('status').textContent = '🎮 DEMO MODE - Simulated Data';
-                document.getElementById('status').className = 'status connected';
-                updateDebug('✅ Running in DEMO MODE with simulated sensor data');
-            }
-        });
+        updateData();
     </script>
 </body>
 </html>
@@ -304,7 +343,7 @@ DASHBOARD_HTML = """
 
 def read_sensor():
     """Background thread to continuously read sensor data"""
-    global ser, latest_data, connection_status, PORT, demo_enabled
+    global ser, latest_data, latest_analysis, connection_status, PORT, demo_enabled
     
     if demo_enabled:
         print("\n🎮 DEMO MODE ENABLED - Generating simulated sensor data\n")
@@ -314,15 +353,49 @@ def read_sensor():
         while True:
             demo_counter += 1
             with data_lock:
+                # Generate demo data
+                temp = round(22 + random.uniform(-2, 2), 2)
+                humid = round(55 + random.uniform(-10, 10), 2)
+                vib = round(random.uniform(0.5, 2.5), 3)
+                fire = 0
+                
                 latest_data = {
-                    "temperature": round(22 + random.uniform(-2, 2), 2),
-                    "humidity": round(55 + random.uniform(-10, 10), 2),
-                    "vibration": round(random.uniform(0.5, 2.5), 3),
-                    "acceleration": round(random.uniform(9.7, 10.0), 3),
-                    "pressure": round(1013 + random.uniform(-5, 5), 2),
+                    "temperature": temp,
+                    "humidity": humid,
+                    "vibration": vib,
+                    "fire": fire,
                     "timestamp": time.strftime('%H:%M:%S')
                 }
-            print(f"[DEMO #{demo_counter}] {latest_data}")
+                
+                # Run analysis
+                reading = SensorReading(
+                    temperature=temp,
+                    humidity=humid,
+                    vibration=vib,
+                    fire=fire
+                )
+                analysis = data_analyzer(reading)
+                risk = risk_evaluator(analysis)
+                decision = decision_agent(risk)
+                
+                latest_analysis = {
+                    "analysis": {
+                        "temperature": analysis.temperature_status,
+                        "humidity": analysis.humidity_status,
+                        "vibration": analysis.vibration_status,
+                        "fire": analysis.fire_status,
+                        "anomaly_score": analysis.anomaly_score
+                    },
+                    "risk": {
+                        "level": risk.risk_level,
+                        "reason": risk.reason
+                    },
+                    "decision": {
+                        "action": decision.decision,
+                        "requires_human": decision.requires_human
+                    }
+                }
+            print(f"[DEMO #{demo_counter}] Temp: {temp}°C, Humidity: {humid}%, Vibration: {vib} | Risk: {risk.risk_level}")
             time.sleep(1)
         return
     
@@ -404,7 +477,8 @@ def debug():
         "current_port": PORT,
         "connection_status": connection_status,
         "demo_mode": demo_enabled,
-        "latest_data": latest_data
+        "latest_data": latest_data,
+        "latest_analysis": latest_analysis
     })
 
 
@@ -421,8 +495,14 @@ def stream():
     def generate():
         while True:
             with data_lock:
-                data = latest_data.copy()
-            yield f"data: {json.dumps(data)}\n\n"
+                response_data = {
+                    "sensor_data": latest_data.copy(),
+                    "analysis": latest_analysis["analysis"] if latest_analysis else {},
+                    "risk": latest_analysis["risk"] if latest_analysis else {},
+                    "decision": latest_analysis["decision"] if latest_analysis else {},
+                    "demo_mode": demo_enabled
+                }
+            yield f"data: {json.dumps(response_data)}\n\n"
             time.sleep(0.5)
     
     return app.response_class(generate(), mimetype='text/event-stream')

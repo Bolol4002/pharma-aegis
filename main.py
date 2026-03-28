@@ -1,19 +1,22 @@
-from agents import sensor_agent, risk_agent, prediction_agent, response_agent
+from agents import run_analysis_pipeline
+
 
 def run_system():
-    print("\n--- RUNNING AGENT SYSTEM ---\n")
-
-    sensor_output = sensor_agent()
-    print("\nSensor Analyst:\n", sensor_output)
-
-    risk_output = risk_agent(sensor_output)
-    print("\nRisk Agent:\n", risk_output)
-
-    prediction_output = prediction_agent(sensor_output)
-    print("\nPrediction Agent:\n", prediction_output)
-
-    final_output = response_agent(sensor_output, risk_output, prediction_output)
-    print("\nFinal Decision:\n", final_output)
+    """Execute Pharma Aegis analysis system"""
+    print("\n🚀 Starting Pharma Aegis Analysis System\n")
+    
+    # Run the analysis pipeline
+    analysis, risk, decision = run_analysis_pipeline()
+    
+    # Additional logic based on decision
+    if decision.decision == "TRIGGER_EMERGENCY":
+        print("🚨 EMERGENCY TRIGGERED - Activating emergency protocols!")
+    elif decision.decision == "ALERT_AND_STABILIZE":
+        print("⚠️  HIGH RISK - Alerting monitoring team for stabilization")
+    elif decision.decision == "CHECK_WAREHOUSE":
+        print("🔍 Manual inspection recommended - Check warehouse conditions")
+    else:
+        print("✅ System operating normally - Continuing to monitor")
 
 
 if __name__ == "__main__":
